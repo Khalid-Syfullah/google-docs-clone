@@ -14,6 +14,7 @@ Open http://127.0.0.1:5190.
 ## Included
 
 - Editable documents with bold, italic, underline, colors, font sizes, headings, alignment, lists, and line spacing
+- Blank starting documents, a Save file dialog for HTML or plain text, and hover navigation between open menus
 - Automatic local saving, a document library, starred documents, and copies
 - Dynamic document outline and word count
 - Comments with quoted text, replies, and resolution
@@ -23,6 +24,6 @@ Open http://127.0.0.1:5190.
 - Responsive layout and print styles
 - Progressive WebMCP support for reading and creating documents
 
-Documents live in this browser’s localStorage, not a server or Google Drive. There is no authentication or live multi-user collaboration. The initial brief and its comments are sample content. Share downloads a copy rather than generating a collaborative link. Images are limited to 2 MB to fit browser storage, which can fill up; download backups of important work.
+Documents live in this browser’s localStorage, not a server or Google Drive. There is no authentication or live multi-user collaboration. Share downloads a copy rather than generating a collaborative link. Images are limited to 2 MB to fit browser storage, which can fill up; download backups of important work.
 
 The editor uses the browser’s native contenteditable and formatting commands. This keeps the app dependency-free; complex editing and undo behavior can vary between browsers. It is not a full pagination or real-time collaboration engine.

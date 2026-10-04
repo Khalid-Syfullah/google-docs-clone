@@ -3,15 +3,20 @@ const $$ = (selector, scope = document) => [...scope.querySelectorAll(selector)]
 const editor = $('#editor');
 const app = $('.app');
 const storageKey = 'docs-workspace-v1';
-const initialHTML = editor.innerHTML;
-const seedComments = [
-  { id: 'c1', author: 'Maya Chen', initials: 'M', color: '#e8e1f7', ink: '#78639d', time: 'Jul 14, 10:42 AM', quote: 'help people understand who we are', text: 'Love this direction. Let’s make sure the homepage leads with this idea — a clear story before everything else.', replies: [], resolved: false },
-  { id: 'c2', author: 'Alex Rivera', initials: 'A', color: '#fce5d8', ink: '#b57655', time: 'Jul 14, 11:08 AM', quote: 'Built for everyone.', text: 'Can we include an accessibility review in the first round? It would be great to build this in from the start.', replies: [], resolved: false }
-];
+function blankDocument() {
+  return { id: crypto.randomUUID(), title: 'Untitled document', html: '<p><br></p>', comments: [], starred: false, updated: Date.now(), notes: '', tasks: [] };
+}
 let state;
 try { state = JSON.parse(localStorage.getItem(storageKey)); } catch { /* A fresh workspace works without storage. */ }
 if (!state || !Array.isArray(state.documents) || !state.documents.length) {
-  state = { activeId: 'welcome', name: 'Khalid', documents: [{ id: 'welcome', title: 'Website redesign · Project brief', html: initialHTML, comments: seedComments, starred: false, updated: Date.now(), notes: '', tasks: [] }] };
+  const doc = blankDocument();
+  state = { activeId: doc.id, name: 'Khalid', documents: [doc], blankStartApplied: true };
+} else if (!state.blankStartApplied) {
+  // Open a blank page once on upgrade; keep all previous documents in the library.
+  const doc = blankDocument();
+  state.documents.unshift(doc);
+  state.activeId = doc.id;
+  state.blankStartApplied = true;
 }
 let active = state.documents.find(d => d.id === state.activeId) || state.documents[0];
 let savedRange = null;
@@ -130,7 +135,7 @@ function loadDocument(doc) {
 }
 function newDocument() {
   persist();
-  const doc = { id: crypto.randomUUID(), title: 'Untitled document', html: '<p><br></p>', comments: [], starred: false, updated: Date.now(), notes: '', tasks: [] };
+  const doc = blankDocument();
   state.documents.unshift(doc); loadDocument(doc); closeModal();
   editor.focus(); notify('New document created');
 }
@@ -238,7 +243,22 @@ function makeCopy() {
   const copy = JSON.parse(JSON.stringify(active)); copy.id = crypto.randomUUID(); copy.title = `Copy of ${active.title}`; copy.updated = Date.now();
   state.documents.unshift(copy); loadDocument(copy); notify('A copy was added to your documents');
 }
-function download(type) {
+function saveFile() {
+  showModal('Save file', `<label for="save-filename">File name</label><input id="save-filename" value="${escapeHTML($('#document-title').value.trim() || 'Untitled document')}"><label for="save-format">File format</label><select id="save-format"><option value="html">Formatted document (.html)</option><option value="txt">Plain text (.txt)</option></select>${actionButtons('Save file')}`, () => {
+    $('#save-filename').focus();
+    $('#save-filename').select();
+    const save = () => {
+      const filename = $('#save-filename').value.trim();
+      if (!filename) { $('#save-filename').focus(); return; }
+      const format = $('#save-format').value;
+      download(format, filename.replace(/\.(html|txt)$/i, ''));
+      closeModal();
+    };
+    $('#modal-submit').onclick = save;
+    $('#save-filename').onkeydown = event => { if (event.key === 'Enter') { event.preventDefault(); save(); } };
+  });
+}
+function download(type, filename) {
   persist();
   let contents, mime, extension;
   if (type === 'txt') { contents = editor.innerText; mime = 'text/plain'; extension = 'txt'; }
@@ -248,7 +268,7 @@ function download(type) {
   }
   const blob = new Blob([contents], {type:mime+';charset=utf-8'});
   const url = URL.createObjectURL(blob); const anchor = document.createElement('a');
-  anchor.href = url; anchor.download = `${active.title.replace(/[\\/:*?"<>|]/g,'-')}.${extension}`; anchor.click();
+  anchor.href = url; anchor.download = `${(filename || active.title).replace(/[\\/:*?"<>|]/g,'-')}.${extension}`; anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 5000); notify('Your document copy has been downloaded');
 }
 $('#import-input').onchange = async event => {
@@ -336,20 +356,33 @@ function addComment() {
 $('#add-comment-btn').onclick = addComment; $('#new-comment-btn').onclick=addComment;
 
 const dropdown = $('#dropdown');
-function hideMenu() { dropdown.hidden = true; $$('[data-menu]').forEach(button=>button.classList.remove('active')); }
+let menuAnchor = null;
+function hideMenu() {
+  dropdown.hidden = true;
+  menuAnchor = null;
+  $$('[data-menu]').forEach(button => { button.classList.remove('active'); button.setAttribute('aria-expanded', 'false'); });
+}
 function showMenu(anchor, items) {
   hideMenu();
-  if (anchor.dataset.menu) anchor.classList.add('active');
+  menuAnchor = anchor;
+  if (anchor.dataset.menu) { anchor.classList.add('active'); anchor.setAttribute('aria-expanded', 'true'); }
+  dropdown.setAttribute('aria-label', anchor.textContent.trim() || anchor.getAttribute('aria-label') || 'Options');
   dropdown.innerHTML = items.map((item,index) => item==='-' ? '<hr>' : typeof item === 'string' ? `<div class="menu-caption">${escapeHTML(item)}</div>` : `<button role="menuitem" data-item="${index}">${escapeHTML(item.label)}<span>${escapeHTML(item.shortcut || '')}</span></button>`).join('');
   dropdown.hidden=false; const rect=anchor.getBoundingClientRect();
-  dropdown.style.left=Math.min(rect.left,window.innerWidth-250)+'px'; dropdown.style.top=Math.min(rect.bottom+5,window.innerHeight-dropdown.offsetHeight-15)+'px';
+  dropdown.style.left=Math.max(8,Math.min(rect.left,window.innerWidth-dropdown.offsetWidth-8))+'px'; dropdown.style.top=Math.min(rect.bottom+5,window.innerHeight-dropdown.offsetHeight-15)+'px';
   $$('[data-item]',dropdown).forEach(button=>button.onclick=()=>{ const item=items[Number(button.dataset.item)];hideMenu();item.action(); });
 }
 document.addEventListener('click',event=>{ if(!dropdown.contains(event.target) && !event.target.closest('[data-menu]') && !event.target.closest('[data-dropdown-anchor]'))hideMenu(); });
-document.addEventListener('keydown',event=>{if(event.key==='Escape')hideMenu();});
+document.addEventListener('keydown', event => { if (event.key === 'Escape' && !dropdown.hidden) { const anchor = menuAnchor; hideMenu(); anchor?.focus(); } });
 dropdown.addEventListener('keydown',event=>{
   const buttons=$$('button',dropdown);const i=buttons.indexOf(document.activeElement);
-  if(event.key==='ArrowDown'||event.key==='ArrowUp'){event.preventDefault();buttons[(i+(event.key==='ArrowDown'?1:-1)+buttons.length)%buttons.length]?.focus();}
+  if(event.key==='ArrowDown'||event.key==='ArrowUp'){event.preventDefault();buttons[(i < 0 ? (event.key==='ArrowDown'?0:buttons.length-1) : (i+(event.key==='ArrowDown'?1:-1)+buttons.length)%buttons.length)]?.focus();}
+  if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+    if (!menuAnchor?.dataset.menu) return;
+    event.preventDefault();
+    switchMenu(menuAnchor, event.key === 'ArrowRight' ? 1 : -1, true);
+  }
+  if (event.key === 'Tab') hideMenu();
 });
 function menuButton(id, items) { const button=$(id); button.dataset.dropdownAnchor='true';button.onclick=()=>showMenu(button,items); }
 menuButton('#align-btn',[
@@ -395,7 +428,7 @@ function showFind() {
 }
 function showShortcuts() { showModal('Keyboard shortcuts',`<div class="shortcuts">${[['Bold','⌘ / Ctrl + B'],['Italic','⌘ / Ctrl + I'],['Underline','⌘ / Ctrl + U'],['Undo','⌘ / Ctrl + Z'],['Redo','⌘ / Ctrl + Shift + Z'],['Insert link','⌘ / Ctrl + K'],['Find in document','⌘ / Ctrl + F'],['Save document','⌘ / Ctrl + S'],['Print','⌘ / Ctrl + P']].map(([label,key])=>`<div class="shortcut"><span>${label}</span><kbd>${key}</kbd></div>`).join('')}</div>`); }
 const menus={
- file:()=>[{label:'New document',action:newDocument},{label:'Open…',shortcut:'Saved documents',action:showDocuments},{label:'Make a copy',action:makeCopy},'-',{label:'Download as HTML',action:()=>download('html')},{label:'Download as plain text',action:()=>download('txt')},{label:'Save as PDF',shortcut:'Print dialog',action:()=>window.print()},'-',{label:'Rename',action:()=>{$('#document-title').focus();$('#document-title').select();}},{label:'Document details',action:showDetails},{label:'Print',shortcut:'⌘P',action:()=>window.print()}],
+ file:()=>[{label:'New document',action:newDocument},{label:'Open…',shortcut:'Saved documents',action:showDocuments},{label:'Make a copy',action:makeCopy},'-',{label:'Save file…',shortcut:'⌘ / Ctrl + S',action:saveFile},{label:'Download as HTML',action:()=>download('html')},{label:'Download as plain text',action:()=>download('txt')},{label:'Save as PDF',shortcut:'Print dialog',action:()=>window.print()},'-',{label:'Rename',action:()=>{$('#document-title').focus();$('#document-title').select();}},{label:'Document details',action:showDetails},{label:'Print',shortcut:'⌘P',action:()=>window.print()}],
  edit:()=>[{label:'Undo',shortcut:'⌘Z',action:()=>command('undo')},{label:'Redo',shortcut:'⌘⇧Z',action:()=>command('redo')},'-',{label:'Select all',shortcut:'⌘A',action:()=>{restoreSelection();document.execCommand('selectAll');}},{label:'Find',shortcut:'⌘F',action:showFind}],
  view:()=>[{label:app.classList.contains('outline-hidden')?'Show document outline':'Hide document outline',action:()=>app.classList.toggle('outline-hidden')},{label:'Toggle comments',action:()=>toggleComments()},{label:app.classList.contains('rail-hidden')?'Show side panel':'Hide side panel',action:()=>app.classList.toggle('rail-hidden')},'-',{label:viewing?'Switch to Editing':'Switch to Viewing',action:()=>setMode(!viewing)},{label:'Full screen',action:()=>{if(document.fullscreenElement)document.exitFullscreen?.();else document.documentElement.requestFullscreen?.().catch(()=>notify('Full screen is unavailable in this preview.'));}}],
  insert:()=>[{label:'Image from device',action:()=>$('#image-input').click()},{label:'Table',action:tableDialog},{label:'Link',shortcut:'⌘K',action:linkDialog},{label:'Comment',action:addComment},'-',{label:'Horizontal line',action:()=>command('insertHorizontalRule')},{label:'Page break',action:()=>command('insertHTML','<hr style="break-after:page"><p><br></p>')}],
@@ -403,7 +436,36 @@ const menus={
  tools:()=>[{label:'Word count',action:showWordCount},{label:editor.spellcheck?'Disable spell check':'Enable spell check',action:()=>$('#spellcheck-btn').click()},{label:'Document notes',action:showNotes}],
  help:()=>[{label:'Keyboard shortcuts',action:showShortcuts},{label:'About this workspace',action:()=>showModal('A little room to write','<p>A familiar document editor for your ideas, plans, and next big thing.</p><p>Use the toolbar to format selected text, add headings to organize your outline, and leave comments on passages.</p><p class="local-notice">Your work is saved on this device. You can open your documents with the blue document icon, or download a copy from File. This independent demo is not affiliated with Google.</p>')}]
 };
-$$('[data-menu]').forEach(button=>button.onclick=()=>{if(!dropdown.hidden&&button.classList.contains('active'))hideMenu();else showMenu(button,menus[button.dataset.menu]());});
+function switchMenu(anchor, direction, focusItem = false) {
+  const buttons = $$('[data-menu]').filter(button => button.getClientRects().length);
+  const next = buttons[(buttons.indexOf(anchor) + direction + buttons.length) % buttons.length];
+  showMenu(next, menus[next.dataset.menu]());
+  if (focusItem) $('button', dropdown)?.focus(); else next.focus();
+}
+$$('[data-menu]').forEach(button => {
+  button.setAttribute('aria-haspopup', 'menu');
+  button.setAttribute('aria-expanded', 'false');
+  button.setAttribute('aria-controls', 'dropdown');
+  button.onclick = () => {
+    if (!dropdown.hidden && menuAnchor === button) hideMenu();
+    else showMenu(button, menus[button.dataset.menu]());
+  };
+  button.addEventListener('pointerenter', event => {
+    if (event.pointerType === 'touch' || dropdown.hidden || !menuAnchor?.dataset.menu || menuAnchor === button) return;
+    showMenu(button, menus[button.dataset.menu]());
+  });
+  button.addEventListener('keydown', event => {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      showMenu(button, menus[button.dataset.menu]());
+      const items = $$('button', dropdown);
+      items[event.key === 'ArrowDown' ? 0 : items.length - 1]?.focus();
+    } else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      event.preventDefault();
+      switchMenu(button, event.key === 'ArrowRight' ? 1 : -1);
+    } else if (event.key === 'Tab') hideMenu();
+  });
+});
 $('#rail-add-btn').dataset.dropdownAnchor='true';$('#rail-add-btn').onclick=()=>showMenu($('#rail-add-btn'),menus.insert());
 function showNotes() {
   showModal('Document notes',`<p>A place for thoughts that don’t belong on the page yet.</p><textarea class="notes-area" id="notes-input" aria-label="Document notes" placeholder="Jot something down…">${escapeHTML(active.notes||'')}</textarea><div class="modal-actions"><button class="primary-button" id="save-notes">Done</button></div>`,()=>{
@@ -426,7 +488,7 @@ $('#profile-btn').onclick=()=>{
 };
 document.addEventListener('keydown',event=>{
   if(!(event.metaKey||event.ctrlKey)||modal.open)return;
-  if(event.key.toLowerCase()==='s'){event.preventDefault();persist();notify('Document saved on this device');}
+  if(event.key.toLowerCase()==='s'){event.preventDefault();saveFile();}
   if(event.key.toLowerCase()==='k'&&editor.contains(document.activeElement)){event.preventDefault();linkDialog();}
   if(event.key.toLowerCase()==='f'){event.preventDefault();showFind();}
 });
